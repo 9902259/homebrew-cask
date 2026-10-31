@@ -1,0 +1,58 @@
+name: Kraken Desktop updates and CI
+
+on:
+  push:
+    paths:
+      - Casks/k/kraken.rb
+      - .github/workflows/kraken-ci.yml
+  pull_request:
+    paths:
+      - Casks/k/kraken.rb
+      - .github/workflows/kraken-ci.yml
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check latest release
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: |
+          # Read Kraken's official release manifest.
+          curl --fail --location --retry 3 https://desktop-downloads.kraken.com/latest.json -o /tmp/kraken-desktop.json
+          python3 - <<'PY'
+          import json, pathlib, re
+          version = json.loads(pathlib.Path('/tmp/kraken-desktop.json').read_text())['version']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version)
+          path = pathlib.Path('Casks/k/kraken.rb')
+          content, count = re.subn(r'(?m)^(\s*version ")[^"]+("\s*)$', lambda m: m[1] + version + m[2], path.read_text(), count=1)
+          assert count == 1
+          path.write_text(content)
+          PY
+      - name: Validate cask
+        run: |
+          # Audit the cask and verify that its release feed is readable.
+          brew tap-new --no-git kraken-ci/packages
+          mkdir -p "$(brew --repository kraken-ci/packages)/Casks"
+          cp Casks/k/kraken.rb "$(brew --repository kraken-ci/packages)/Casks/kraken.rb"
+          brew trust kraken-ci/packages
+          brew audit --new --cask kraken-ci/packages/kraken
+          brew livecheck --cask kraken-ci/packages/kraken
+      - name: Commit validated update
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: |
+          # Only publish a version that passed the audit.
+          git diff --quiet -- Casks/k/kraken.rb && exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Casks/k/kraken.rb
+          git commit -m 'kraken: update version'
+          git push origin HEAD:main
