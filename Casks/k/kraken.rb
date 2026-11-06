@@ -1,5 +1,5 @@
 cask "kraken" do
-  version "1.34.0"
+  version "1.34.1"
   sha256 :no_check
 
   url "https://desktop-downloads.kraken.com/latest/kraken-universal-apple-darwin.zip"
